@@ -5,29 +5,32 @@ Based on pymtl/pymtl/tools/translation/verilator_to_pymtl.py
 import sys
 import os
 import jinja2
+import subprocess
+import glob
 
 VERILATOR_INCLUDE_DIR = '/usr/share/verilator/include'
+
+THIS_DIR = os.path.dirname(__file__)
 
 
 def verilog_to_python(model_name, filename_v, in_ports, out_ports, working_directory):
     """
     Create a python interface for Verilog HDL.
     """
-    filename_pyx = model_name + '.pyx'
+    working_directory = os.path.abspath(working_directory)
+    filename_pyx = os.path.join(working_directory, model_name + '.pyx')
     vobj_name = 'V' + model_name
     print('verilating model')
-    verilate_model(filename_v, model_name)
+    obj_directory = os.path.join(working_directory, 'obj_dir_' + model_name)
+    # Call verilator
+    subprocess.call(['verilator', '-cc', filename_v, '-top-module', model_name,
+                     '--Mdir', obj_directory, '-trace', '-Wno-lint', '-Wno-UNOPTFLAT'])
     print('creating cython')
-    create_cython(in_ports, out_ports, model_name, filename_pyx, vobj_name, working_directory)
-    create_setup(filename_pyx, vobj_name, model_name)
-    cythonize_model(model_name)
-
-
-def verilate_model(filename, model_name):
-    cmd = ('rm -r obj_dir_{1}; verilator -cc {0} -top-module {1}'
-           ' --Mdir obj_dir_{1} -trace -Wno-lint -Wno-UNOPTFLAT').format(filename, model_name)
-    print(cmd)
-    os.system(cmd)
+    create_cython(in_ports, out_ports, model_name, filename_pyx, working_directory)
+    setup_filename = os.path.join(working_directory, 'setup_{}.py'.format(model_name))
+    create_setup(filename_pyx, vobj_name, model_name, setup_filename, obj_directory)
+    subprocess.call(['python', setup_filename, 'build_ext', '-i', '-f'], cwd=working_directory)
+    sys.path.append(working_directory)
 
 
 def get_type(width):
@@ -47,12 +50,12 @@ def mangle_name(name):
     return name.replace('__', '___05F')
 
 
-def create_cython(in_ports, out_ports, model_name, filename_pyx, vobj_name, working_directory):
+def create_cython(in_ports, out_ports, model_name, filename_pyx, working_directory):
     """
     Generate a Cython wrapper file for Verilated C++.
     """
     # Generate the Cython source code
-    template_fn = 'template.pyx'
+    template_fn = os.path.join(THIS_DIR, 'template.pyx')
     with open(template_fn, 'r') as f:
         template = jinja2.Template(f.read())
     in_port_types = [
@@ -69,40 +72,35 @@ def create_cython(in_ports, out_ports, model_name, filename_pyx, vobj_name, work
     with open(filename_pyx, 'w') as f:
         f.write(pyx_contents)
 
+TEMPLATE_PYX = """
+from distutils.core import setup
+from distutils.extension import Extension
+from Cython.Distutils import build_ext
 
-def create_setup( filename_pyx, vobj_name, model_name ):
+setup(
+  ext_modules=[
+    Extension(
+      'V{model_name}',
+      sources=['{filename_pyx}',
+                {sources},
+               '{verilator_include}/verilated.cpp',
+               '{verilator_include}/verilated_vcd_c.cpp',
+      ],
+      include_dirs=['{verilator_include}'],
+      language='c++' ) ],
+  cmdclass = {{'build_ext': build_ext}}
+  )
+"""
+
+def create_setup(filename_pyx, vobj_name, model_name, setup_filename, obj_directory):
     """
     Create a setup.py file to compile the Cython Verilator wrapper.
     """
-    # Generate setup.py
-    verilator_include = VERILATOR_INCLUDE_DIR
-    dir_ = 'obj_dir_{0}'.format( model_name )
-    file_ = '"{0}/{{}}",'.format(dir_)
-    sources = [file_.format(x) for x in os.listdir(dir_) if '.cpp' in x]
-    sources = ' '.join(sources)
-
-    f = open('setup_{0}.py'.format(model_name), 'w')
-
-    f.write( "from distutils.core import setup\n"
-            "from distutils.extension import Extension\n"
-            "from Cython.Distutils import build_ext\n"
-            "\n"
-            "setup(\n"
-            "  ext_modules = [ Extension( '{0}',\n"
-            "                             sources=['{1}',\n"
-            "                             {5}\n"
-            "                             '{4}/verilated.cpp',"
-            "                             '{4}/verilated_vcd_c.cpp'"
-            "                             ],\n"
-            "                             include_dirs=['{4}'],\n"
-            "                             language='c++' ) ],\n"
-            "  cmdclass = {2}'build_ext': build_ext{3}\n"
-            ")\n".format(vobj_name, filename_pyx, '{', '}', verilator_include, sources))
-    f.close()
-
-
-def cythonize_model( model_name ):
-    """
-    Create a Python interface to the Verilated C++ using Cython.
-    """
-    os.system('python setup_{0}.py build_ext -i -f'.format(model_name))
+    content = TEMPLATE_PYX.format(
+        model_name=model_name,
+        filename_pyx=filename_pyx,
+        verilator_include=VERILATOR_INCLUDE_DIR,
+        sources=', '.join(["'{}'".format(x) for x in glob.glob(os.path.join(obj_directory, '*.cpp'))]),
+        )
+    with open(setup_filename, 'w') as f:
+        f.write(content)

@@ -18,5 +18,6 @@ setup(
         'setuptools_scm',
     ],
     install_requires=[
+        'cython',
     ],
 )
