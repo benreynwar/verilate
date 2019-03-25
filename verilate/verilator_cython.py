@@ -8,12 +8,12 @@ import jinja2
 import subprocess
 import glob
 
-VERILATOR_INCLUDE_DIR = '/usr/share/verilator/include'
+VERILATOR_INCLUDE_DIR = '/usr/local/share/verilator/include'
 
 THIS_DIR = os.path.dirname(__file__)
 
 
-def verilog_to_python(model_name, filename_v, in_ports, out_ports, working_directory):
+def verilog_to_python(model_name, filenames, in_ports, out_ports, generics, working_directory,):
     """
     Create a python interface for Verilog HDL.
     """
@@ -22,9 +22,12 @@ def verilog_to_python(model_name, filename_v, in_ports, out_ports, working_direc
     vobj_name = 'V' + model_name
     print('verilating model')
     obj_directory = os.path.join(working_directory, 'obj_dir_' + model_name)
+    generics_args = ['-pvalue+{}={}'.format(key, value) for key, value in generics.items()]
     # Call verilator
-    subprocess.call(['verilator', '-cc', filename_v, '-top-module', model_name,
-                     '--Mdir', obj_directory, '-trace', '-Wno-lint', '-Wno-UNOPTFLAT'])
+    cmd = ['verilator', '-cc'] + filenames + generics_args + ['-top-module', model_name,
+           '--Mdir', obj_directory, '-trace', '-Wno-lint', '-Wno-UNOPTFLAT']
+    print(' '.join(cmd))
+    subprocess.call(cmd)
     print('creating cython')
     create_cython(in_ports, out_ports, model_name, filename_pyx, working_directory)
     setup_filename = os.path.join(working_directory, 'setup_{}.py'.format(model_name))

@@ -1,7 +1,7 @@
 import random
 import math
 
-import verilator_cython
+from verilate import verilator_cython
 
 
 def is_int(s):
@@ -51,15 +51,15 @@ def set_value(wrapped, name, value):
         setattr(wrapped, name, value)
 
 
-def run_basic_test_with_verilator(wrapped, tb):
+def run_basic_test_with_verilator(wrapped, tb, clock_name='clk'):
     outputs = None
     while True:
         try:
-            wrapped.clk = 0
-            wrapped.eval()
+            setattr(wrapped, clock_name, 0)
             inputs = tb.send(fix_output_dict(outputs))
             for signal_name, signal_value in inputs.items():
                 set_value(wrapped, signal_name, signal_value)
+            wrapped.eval()
             output_signal_names = []
             for key in dir(wrapped):
                 if key[0] != '_' and key not in ('eval', 'dump', 'the_time', 'clk'):
@@ -67,7 +67,7 @@ def run_basic_test_with_verilator(wrapped, tb):
             outputs = {}
             for output_signal_name in output_signal_names:
                 outputs[output_signal_name] = getattr(wrapped, output_signal_name)
-            wrapped.clk = 1
+            setattr(wrapped, clock_name, 1)
             wrapped.eval()
         except StopIteration:
             break
